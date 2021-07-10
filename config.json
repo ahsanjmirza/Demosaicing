@@ -1,0 +1,8 @@
+{
+  "image_path": "./inputs",
+  "output_path": "./outputs",
+  "rows": 1200,
+  "cols": 1920,
+  "bitdepth": 10,
+  "cfa": "RGGB"
+}
