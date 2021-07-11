@@ -4,5 +4,7 @@
   "rows": 1200,
   "cols": 1920,
   "bitdepth": 10,
-  "cfa": "RGGB"
+  "cfa": "RGGB",
+  "g_grad_th": 0.1,
+  "rb_grad_th": 0.7
 }
