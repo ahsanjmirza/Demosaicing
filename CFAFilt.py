@@ -66,12 +66,17 @@ class CFAtoRGB:
 
     def calc_weights(self):
         gauss_sigma1 = np.array([[0.06136, 0.24477, 0.38774, 0.24477, 0.06136]])
-        self.w_h = ndimage.correlate(np.abs(self.raw - \
-            ndimage.correlate(self.raw, gauss_sigma1)), gauss_sigma1.T)
-        self.w_v = ndimage.correlate(np.abs(self.raw - \
-            ndimage.correlate(self.raw, gauss_sigma1.T)), gauss_sigma1)
-        self.w_h[self.w_h==0], self.w_v[self.w_v==0] = 1, 1
+        gauss_sigma1_2D = np.multiply(gauss_sigma1.T, gauss_sigma1)
 
+        gradh = ndimage.correlate(np.abs(self.raw - ndimage.correlate(self.raw, \
+            gauss_sigma1)), gauss_sigma1_2D)
+        gradv = ndimage.correlate(np.abs(self.raw - ndimage.correlate(self.raw, \
+            gauss_sigma1.T)), gauss_sigma1_2D)
+
+        self.w_h = np.exp(-gradh)
+        self.w_v = np.exp(-gradv)
+
+        
         index_ = np.array(list(itertools.product(range(self.i_start, self.i_end), 
                                                  range(self.j_start, self.j_end))))
         i, j = index_[:, 0], index_[:, 1]
@@ -151,15 +156,16 @@ class CFAtoRGB:
                 0.5*self.raw[i, j] + 0.5*self.raw[i+1, j] - 0.25*self.raw[i+2, j]
         if dir == 'H': return hg
         elif dir == 'V': return vg
-        hg *= self.w_v[i, j]
-        vg *= self.w_h[i, j]
+        hg *= self.w_h[i, j]
+        vg *= self.w_v[i, j]
         return (hg+vg)/(self.w_h[i, j]+self.w_v[i, j])
+        
         
     def get_interpolatedG(self, i, j):
         if self.g_grad_th*self.w_h[i, j] > self.w_v[i, j]:
-            return self.getGreen(i, j, 'V')
-        elif self.g_grad_th*self.w_v[i, j] > self.w_h[i, j]:
             return self.getGreen(i, j, 'H')
+        elif self.g_grad_th*self.w_v[i, j] > self.w_h[i, j]:
+            return self.getGreen(i, j, 'V')
         return self.getGreen(i, j, 'W')
 
     def get_interpolatedRBonBR(self, i, j):

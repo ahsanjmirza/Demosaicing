@@ -3,8 +3,8 @@
   "output_path": "./outputs",
   "rows": 1200,
   "cols": 1920,
-  "bitdepth": 10,
+  "bitdepth": 8,
   "cfa": "RGGB",
-  "g_grad_th": 0.1,
+  "g_grad_th": 0.0,
   "rb_grad_th": 0.7
 }
