@@ -9,12 +9,14 @@ class CFAtoRGB:
                  bitdepth, 
                  CFA,
                  g_grad_th,
-                 rb_grad_th):
+                 rb_grad_th,
+                 var_th):
         self.bitdepth = bitdepth
         self.maxValBD = (2**self.bitdepth)-1
         self.CFA = CFA
         self.g_grad_th = g_grad_th
         self.rb_grad_th = rb_grad_th
+        self.var_th = var_th
         return
 
     def get_CFAColor(self, i, j):
@@ -65,18 +67,28 @@ class CFAtoRGB:
         return
 
     def calc_weights(self):
-        gauss_sigma1 = np.array([[0.06136, 0.24477, 0.38774, 0.24477, 0.06136]])
+        gauss_sigma1 = np.array([[0.06136, 0.24477, 0.38774, 0.24477, 0.06136]], dtype=np.float32)
         gauss_sigma1_2D = np.multiply(gauss_sigma1.T, gauss_sigma1)
 
         gradh = ndimage.correlate(np.abs(self.raw - ndimage.correlate(self.raw, \
-            gauss_sigma1)), gauss_sigma1_2D)
+            gauss_sigma1)), gauss_sigma1.T)
         gradv = ndimage.correlate(np.abs(self.raw - ndimage.correlate(self.raw, \
-            gauss_sigma1.T)), gauss_sigma1_2D)
+            gauss_sigma1.T)), gauss_sigma1)
 
-        self.w_h = np.exp(-gradh)
-        self.w_v = np.exp(-gradv)
+        # print('gradh:',gradh.min(),'-',gradh.max())
+        # print('gradv:',gradv.min(),'-',gradv.max())
 
-        
+        self.w_h1 = np.exp(-gradh)
+        self.w_v1 = np.exp(-gradv)
+
+        gauss_sigma1 = np.array([[0.0385, 0.1538, 0.6154, 0.1538, 0.0385]], dtype=np.float32)
+
+        gradh = ndimage.correlate(np.abs(ndimage.correlate(self.raw, np.array([[-1, 2, 0, -2, 1]]))), gauss_sigma1.T)
+        gradv = ndimage.correlate(np.abs(ndimage.correlate(self.raw, np.array([[-1, 2, 0, -2, 1]]).T)), gauss_sigma1)
+        gradh[gradh<1], gradv[gradv<1] = 1, 1
+
+        self.w_h2, self.w_v2 = gradv, gradh
+
         index_ = np.array(list(itertools.product(range(self.i_start, self.i_end), 
                                                  range(self.j_start, self.j_end))))
         i, j = index_[:, 0], index_[:, 1]
@@ -103,8 +115,45 @@ class CFAtoRGB:
         self.grad45[self.grad45==0], self.grad135[self.grad135==0] = 1, 1
         return
 
+    def calc_variance(self):
+        index_ = np.array(list(itertools.product(range(self.i_start, self.i_end), 
+                                                 range(self.j_start, self.j_end))))
+        i, j = index_[:, 0], index_[:, 1]
+
+        varRB = np.zeros(self.raw.shape, dtype=np.float32)
+        varG = np.zeros(self.raw.shape, dtype=np.float32)
+        meanRB = ndimage.correlate(self.raw, np.array([[1, 0, 1, 0, 1],
+                                                       [0, 0, 0, 0, 0],
+                                                       [1, 0, 1, 0, 1],
+                                                       [0, 0, 0, 0, 0],
+                                                       [1, 0, 1, 0, 1]]))/9
+
+        meanG = ndimage.correlate(self.raw, np.array([[0, 1, 0, 1, 0],
+                                                      [1, 0, 1, 0, 1],
+                                                      [0, 1, 0, 1, 0],
+                                                      [1, 0, 1, 0, 1],
+                                                      [0, 1, 0, 1, 0]]))/12
+
+        varRB[i, j] = ((self.raw[i-2, j-2]-meanRB[i, j])**2)+((self.raw[i-2, j]-meanRB[i, j])**2)
+        varRB[i, j] += ((self.raw[i-2, j+2]-meanRB[i, j])**2)+((self.raw[i, j-2]-meanRB[i, j])**2)
+        varRB[i, j] += ((self.raw[i, j]-meanRB[i, j])**2)+((self.raw[i, j+2]-meanRB[i, j])**2)
+        varRB[i, j] += ((self.raw[i+2, j-2]-meanRB[i, j])**2)+((self.raw[i+2, j]-meanRB[i, j])**2)
+        varRB[i, j] += ((self.raw[i+2, j+2]-meanRB[i, j])**2)
+
+        varG[i, j] = ((self.raw[i-2, j-1]-meanG[i, j])**2)+((self.raw[i-2, j+1]-meanG[i, j])**2)
+        varG[i, j] += ((self.raw[i-1, j-2]-meanG[i, j])**2)+((self.raw[i-1, j]-meanG[i, j])**2)
+        varG[i, j] += ((self.raw[i-1, j+2]-meanG[i, j])**2)+((self.raw[i, j-1]-meanG[i, j])**2)
+        varG[i, j] += ((self.raw[i, j+1]-meanG[i, j])**2)+((self.raw[i+1, j-2]-meanG[i, j])**2)
+        varG[i, j] += ((self.raw[i+1, j]-meanG[i, j])**2)+((self.raw[i+1, j+2]-meanG[i, j])**2)
+        varG[i, j] += ((self.raw[i+2, j-1]-meanG[i, j])**2)+((self.raw[i+2, j+1]-meanG[i, j])**2)
+        varRB, varG = varRB/9, varG/12
+
+        self.var5x5 = np.abs(varG-varRB)
+        return
+
     def demosaic(self):
         self.calc_weights()
+        self.calc_variance()
 
         self.red = np.zeros(self.raw.shape, dtype=np.float32)
         self.blue = np.zeros(self.raw.shape, dtype=np.float32)
@@ -156,15 +205,20 @@ class CFAtoRGB:
                 0.5*self.raw[i, j] + 0.5*self.raw[i+1, j] - 0.25*self.raw[i+2, j]
         if dir == 'H': return hg
         elif dir == 'V': return vg
-        hg *= self.w_h[i, j]
-        vg *= self.w_v[i, j]
-        return (hg+vg)/(self.w_h[i, j]+self.w_v[i, j])
-        
+        elif dir == 'W':
+            if self.var5x5[i, j]>self.var_th:
+                hg *= self.w_h1[i, j]
+                vg *= self.w_v1[i, j]
+                return (hg+vg)/(self.w_h1[i, j]+self.w_v1[i, j])
+            else:
+                hg *= self.w_h2[i, j]
+                vg *= self.w_v2[i, j]
+                return (hg+vg)/(self.w_h2[i, j]+self.w_v2[i, j])
         
     def get_interpolatedG(self, i, j):
-        if self.g_grad_th*self.w_h[i, j] > self.w_v[i, j]:
+        if self.g_grad_th*self.w_h2[i, j] > self.w_v2[i, j]:
             return self.getGreen(i, j, 'H')
-        elif self.g_grad_th*self.w_v[i, j] > self.w_h[i, j]:
+        elif self.g_grad_th*self.w_v2[i, j] > self.w_h2[i, j]:
             return self.getGreen(i, j, 'V')
         return self.getGreen(i, j, 'W')
 
@@ -180,12 +234,12 @@ class CFAtoRGB:
         return out
     
     def get_interpolatedRBonG(self, i, j):
-        red = self.bayer_3ch[i, j, 1]-((self.w_v[i, j]*(
-            self.bayer_3ch[i-1, j, 1]-self.bayer_3ch[i-1, j, 0]+self.bayer_3ch[i+1, j, 1]-self.bayer_3ch[i+1, j, 0]))/(2*(self.w_v[i, j]+self.w_h[i, j])))
-        red -= ((self.w_h[i, j]*(self.bayer_3ch[i, j-1, 1]-self.bayer_3ch[i, j-1, 0] +
-                                                                  self.bayer_3ch[i, j+1, 1]-self.bayer_3ch[i, j+1, 0]))/(2*(self.w_v[i, j]+self.w_h[i, j])))
-        blue = self.bayer_3ch[i, j, 1]-((self.w_v[i, j]*(
-            self.bayer_3ch[i-1, j, 1]-self.bayer_3ch[i-1, j, 2]+self.bayer_3ch[i+1, j, 1]-self.bayer_3ch[i+1, j, 2]))/(2*(self.w_v[i, j]+self.w_h[i, j])))
-        blue -= ((self.w_h[i, j]*(self.bayer_3ch[i, j-1, 1]-self.bayer_3ch[i, j-1, 2] +
-                                                                  self.bayer_3ch[i, j+1, 1]-self.bayer_3ch[i, j+1, 2]))/(2*(self.w_v[i, j]+self.w_h[i, j])))
+        red = self.bayer_3ch[i, j, 1]-((self.w_v1[i, j]*(
+            self.bayer_3ch[i-1, j, 1]-self.bayer_3ch[i-1, j, 0]+self.bayer_3ch[i+1, j, 1]-self.bayer_3ch[i+1, j, 0]))/(2*(self.w_v1[i, j]+self.w_h1[i, j])))
+        red -= ((self.w_h1[i, j]*(self.bayer_3ch[i, j-1, 1]-self.bayer_3ch[i, j-1, 0] +
+                                                                  self.bayer_3ch[i, j+1, 1]-self.bayer_3ch[i, j+1, 0]))/(2*(self.w_v1[i, j]+self.w_h1[i, j])))
+        blue = self.bayer_3ch[i, j, 1]-((self.w_v1[i, j]*(
+            self.bayer_3ch[i-1, j, 1]-self.bayer_3ch[i-1, j, 2]+self.bayer_3ch[i+1, j, 1]-self.bayer_3ch[i+1, j, 2]))/(2*(self.w_v1[i, j]+self.w_h1[i, j])))
+        blue -= ((self.w_h1[i, j]*(self.bayer_3ch[i, j-1, 1]-self.bayer_3ch[i, j-1, 2] +
+                                                                  self.bayer_3ch[i, j+1, 1]-self.bayer_3ch[i, j+1, 2]))/(2*(self.w_v1[i, j]+self.w_h1[i, j])))
         return (red, blue)
